@@ -1,10 +1,12 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import Icon from '@/components/ui/icon';
+import AuthDialog from '@/components/AuthDialog';
+import AdminPanel from '@/components/AdminPanel';
 
 interface Movie {
   id: number;
@@ -15,7 +17,15 @@ interface Movie {
   votes: number;
   description: string;
   imageUrl: string;
+  videoUrl?: string;
+  hashtags?: string[];
   isSaved: boolean;
+}
+
+interface User {
+  username: string;
+  password: string;
+  role: 'user' | 'admin';
 }
 
 const mockMovies: Movie[] = [
@@ -94,10 +104,76 @@ export default function Index() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedGenre, setSelectedGenre] = useState('Все');
   const [activeTab, setActiveTab] = useState('home');
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [users, setUsers] = useState<User[]>([
+    { username: 'admin', password: 'admin', role: 'admin' },
+    { username: 'user', password: 'user', role: 'user' }
+  ]);
+  const [showAuthDialog, setShowAuthDialog] = useState(false);
+  const [showAdminPanel, setShowAdminPanel] = useState(false);
+
+  useEffect(() => {
+    setShowAuthDialog(true);
+  }, []);
 
   const toggleSaved = (id: number) => {
     setMovies(movies.map(m => m.id === id ? { ...m, isSaved: !m.isSaved } : m));
   };
+
+  const handleLogin = (username: string, password: string) => {
+    const user = users.find(u => u.username === username && u.password === password);
+    if (user) {
+      setCurrentUser(user);
+      setShowAuthDialog(false);
+    } else {
+      alert('Неверное имя пользователя или пароль');
+    }
+  };
+
+  const handleLogout = () => {
+    setCurrentUser(null);
+    setShowAuthDialog(true);
+  };
+
+  const handleAddMovie = (movie: Omit<Movie, 'id' | 'votes' | 'isSaved'>) => {
+    const newMovie = {
+      ...movie,
+      id: Math.max(...movies.map(m => m.id)) + 1,
+      votes: 0,
+      isSaved: false
+    };
+    setMovies([...movies, newMovie]);
+  };
+
+  const handleUpdateMovie = (id: number, updates: Partial<Movie>) => {
+    setMovies(movies.map(m => m.id === id ? { ...m, ...updates } : m));
+  };
+
+  const handleDeleteMovie = (id: number) => {
+    setMovies(movies.filter(m => m.id !== id));
+  };
+
+  const handleAddUser = (user: User) => {
+    if (!users.find(u => u.username === user.username)) {
+      setUsers([...users, user]);
+    } else {
+      alert('Пользователь с таким именем уже существует');
+    }
+  };
+
+  const handleDeleteUser = (username: string) => {
+    setUsers(users.filter(u => u.username !== username));
+  };
+
+  if (!currentUser) {
+    return (
+      <AuthDialog 
+        open={showAuthDialog} 
+        onOpenChange={setShowAuthDialog}
+        onLogin={handleLogin}
+      />
+    );
+  }
 
   const filteredMovies = movies.filter(movie => {
     const matchesSearch = movie.title.toLowerCase().includes(searchQuery.toLowerCase());
@@ -111,7 +187,7 @@ export default function Index() {
       <header className="sticky top-0 z-50 border-b border-border bg-black/80 backdrop-blur-xl">
         <div className="container mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
-            <h1 className="text-3xl font-bold font-montserrat text-shadow-red gradient-red bg-clip-text text-transparent">
+            <h1 className="text-3xl font-bold font-montserrat text-primary">
               EXF4TT FILMS
             </h1>
             
@@ -128,12 +204,31 @@ export default function Index() {
             </div>
 
             <div className="flex items-center gap-2">
+              {currentUser.role === 'admin' && (
+                <Button 
+                  variant="ghost" 
+                  size="icon" 
+                  className="hover:text-primary transition-colors"
+                  onClick={() => setShowAdminPanel(true)}
+                >
+                  <Icon name="Settings" size={20} />
+                </Button>
+              )}
               <Button variant="ghost" size="icon" className="hover:text-primary transition-colors">
                 <Icon name="Bell" size={20} />
               </Button>
-              <Button variant="ghost" size="icon" className="hover:text-primary transition-colors">
-                <Icon name="User" size={20} />
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                className="hover:text-primary transition-colors"
+                onClick={handleLogout}
+              >
+                <Icon name="LogOut" size={20} />
               </Button>
+              <div className="flex items-center gap-2 ml-2">
+                <Icon name="User" size={20} className="text-primary" />
+                <span className="text-sm font-medium">{currentUser.username}</span>
+              </div>
             </div>
           </div>
         </div>
@@ -363,6 +458,18 @@ export default function Index() {
           )}
         </TabsContent>
       </Tabs>
+
+      <AdminPanel
+        open={showAdminPanel}
+        onOpenChange={setShowAdminPanel}
+        movies={movies}
+        users={users}
+        onAddMovie={handleAddMovie}
+        onUpdateMovie={handleUpdateMovie}
+        onDeleteMovie={handleDeleteMovie}
+        onAddUser={handleAddUser}
+        onDeleteUser={handleDeleteUser}
+      />
     </div>
   );
 }
