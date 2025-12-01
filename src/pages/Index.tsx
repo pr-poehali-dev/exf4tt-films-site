@@ -7,6 +7,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import Icon from '@/components/ui/icon';
 import AuthDialog from '@/components/AuthDialog';
 import AdminPanel from '@/components/AdminPanel';
+import { api, type Movie as ApiMovie, type User as ApiUser } from '@/lib/api';
+import { useToast } from '@/hooks/use-toast';
 
 interface Movie {
   id: number;
@@ -23,12 +25,13 @@ interface Movie {
 }
 
 interface User {
+  id?: number;
   username: string;
-  password: string;
+  password?: string;
   role: 'user' | 'admin';
 }
 
-const mockMovies: Movie[] = [
+const mockMoviesOld: Movie[] = [
   {
     id: 1,
     title: 'Темный рыцарь',
@@ -100,33 +103,86 @@ const mockMovies: Movie[] = [
 const genres = ['Все', 'Боевик', 'Драма', 'Фантастика', 'Криминал', 'Триллер', 'Мелодрама'];
 
 export default function Index() {
-  const [movies, setMovies] = useState<Movie[]>(mockMovies);
+  const [movies, setMovies] = useState<Movie[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedGenre, setSelectedGenre] = useState('Все');
   const [activeTab, setActiveTab] = useState('home');
   const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [users, setUsers] = useState<User[]>([
-    { username: 'admin', password: 'admin', role: 'admin' },
-    { username: 'user', password: 'user', role: 'user' }
-  ]);
+  const [users, setUsers] = useState<User[]>([]);
   const [showAuthDialog, setShowAuthDialog] = useState(false);
   const [showAdminPanel, setShowAdminPanel] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const { toast } = useToast();
 
   useEffect(() => {
     setShowAuthDialog(true);
   }, []);
 
-  const toggleSaved = (id: number) => {
-    setMovies(movies.map(m => m.id === id ? { ...m, isSaved: !m.isSaved } : m));
+  useEffect(() => {
+    if (currentUser) {
+      loadMovies();
+      if (currentUser.role === 'admin') {
+        loadUsers();
+      }
+    }
+  }, [currentUser]);
+
+  const loadMovies = async () => {
+    try {
+      const data = await api.getMovies(currentUser?.id);
+      setMovies(data.map(m => ({
+        id: m.id,
+        title: m.title,
+        year: m.year,
+        genre: m.genre,
+        rating: m.rating,
+        votes: m.votes,
+        description: m.description,
+        imageUrl: m.image_url,
+        videoUrl: m.video_url,
+        hashtags: m.hashtags,
+        isSaved: m.is_saved || false
+      })));
+    } catch (error) {
+      toast({ title: 'Ошибка загрузки фильмов', variant: 'destructive' });
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleLogin = (username: string, password: string) => {
-    const user = users.find(u => u.username === username && u.password === password);
-    if (user) {
-      setCurrentUser(user);
+  const loadUsers = async () => {
+    try {
+      const data = await api.getUsers();
+      setUsers(data.map(u => ({ id: u.id, username: u.username, role: u.role })));
+    } catch (error) {
+      console.error('Failed to load users', error);
+    }
+  };
+
+  const toggleSaved = async (id: number) => {
+    if (!currentUser?.id) return;
+    const movie = movies.find(m => m.id === id);
+    if (!movie) return;
+    
+    const newSavedState = !movie.isSaved;
+    setMovies(movies.map(m => m.id === id ? { ...m, isSaved: newSavedState } : m));
+    
+    try {
+      await api.toggleSaved(currentUser.id, id, newSavedState);
+    } catch (error) {
+      setMovies(movies.map(m => m.id === id ? { ...m, isSaved: !newSavedState } : m));
+      toast({ title: 'Ошибка сохранения', variant: 'destructive' });
+    }
+  };
+
+  const handleLogin = async (username: string, password: string) => {
+    try {
+      const user = await api.login(username, password);
+      setCurrentUser({ id: user.id, username: user.username, role: user.role });
       setShowAuthDialog(false);
-    } else {
-      alert('Неверное имя пользователя или пароль');
+      toast({ title: `Добро пожаловать, ${user.username}!` });
+    } catch (error) {
+      toast({ title: 'Неверные данные', description: 'Проверьте имя пользователя и пароль', variant: 'destructive' });
     }
   };
 
@@ -135,34 +191,73 @@ export default function Index() {
     setShowAuthDialog(true);
   };
 
-  const handleAddMovie = (movie: Omit<Movie, 'id' | 'votes' | 'isSaved'>) => {
-    const newMovie = {
-      ...movie,
-      id: Math.max(...movies.map(m => m.id)) + 1,
-      votes: 0,
-      isSaved: false
-    };
-    setMovies([...movies, newMovie]);
-  };
-
-  const handleUpdateMovie = (id: number, updates: Partial<Movie>) => {
-    setMovies(movies.map(m => m.id === id ? { ...m, ...updates } : m));
-  };
-
-  const handleDeleteMovie = (id: number) => {
-    setMovies(movies.filter(m => m.id !== id));
-  };
-
-  const handleAddUser = (user: User) => {
-    if (!users.find(u => u.username === user.username)) {
-      setUsers([...users, user]);
-    } else {
-      alert('Пользователь с таким именем уже существует');
+  const handleAddMovie = async (movie: Omit<Movie, 'id' | 'votes' | 'isSaved'>) => {
+    try {
+      const newMovie = await api.addMovie({
+        title: movie.title,
+        year: movie.year,
+        genre: movie.genre,
+        rating: movie.rating,
+        description: movie.description,
+        image_url: movie.imageUrl,
+        video_url: movie.videoUrl,
+        hashtags: movie.hashtags
+      });
+      await loadMovies();
+      toast({ title: 'Фильм добавлен' });
+    } catch (error) {
+      toast({ title: 'Ошибка добавления', variant: 'destructive' });
     }
   };
 
-  const handleDeleteUser = (username: string) => {
-    setUsers(users.filter(u => u.username !== username));
+  const handleUpdateMovie = async (id: number, updates: Partial<Movie>) => {
+    try {
+      await api.updateMovie(id, {
+        title: updates.title,
+        year: updates.year,
+        genre: updates.genre,
+        rating: updates.rating,
+        description: updates.description,
+        image_url: updates.imageUrl,
+        video_url: updates.videoUrl,
+        hashtags: updates.hashtags
+      });
+      await loadMovies();
+      toast({ title: 'Фильм обновлён' });
+    } catch (error) {
+      toast({ title: 'Ошибка обновления', variant: 'destructive' });
+    }
+  };
+
+  const handleDeleteMovie = async (id: number) => {
+    try {
+      await api.deleteMovie(id);
+      await loadMovies();
+      toast({ title: 'Фильм удалён' });
+    } catch (error) {
+      toast({ title: 'Ошибка удаления', variant: 'destructive' });
+    }
+  };
+
+  const handleAddUser = async (user: User) => {
+    if (!user.password) return;
+    try {
+      await api.addUser({ username: user.username, password: user.password, role: user.role });
+      await loadUsers();
+      toast({ title: 'Пользователь создан' });
+    } catch (error: any) {
+      toast({ title: 'Ошибка', description: error.message, variant: 'destructive' });
+    }
+  };
+
+  const handleDeleteUser = async (username: string) => {
+    try {
+      await api.deleteUser(username);
+      await loadUsers();
+      toast({ title: 'Пользователь удалён' });
+    } catch (error) {
+      toast({ title: 'Ошибка удаления', variant: 'destructive' });
+    }
   };
 
   if (!currentUser) {
